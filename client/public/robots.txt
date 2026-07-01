@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://camdill.com/sitemap.xml

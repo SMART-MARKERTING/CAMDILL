@@ -1,0 +1,182 @@
+export async function onRequestPost(context) {
+  const { request, env } = context;
+
+  // The React app submits JSON via fetch. The static /opt-in page also submits JSON
+  // when JavaScript is available, but falls back to a native form POST
+  // (application/x-www-form-urlencoded) when it is not. Support both.
+  const contentType = request.headers.get("content-type") || "";
+  const isForm =
+    contentType.includes("application/x-www-form-urlencoded") ||
+    contentType.includes("multipart/form-data");
+
+  // For no-JS form submissions, respond with a simple HTML page so the visitor
+  // isn't left staring at raw JSON. Otherwise respond with JSON for the SPA.
+  const reply = (body, status) => {
+    if (isForm) {
+      return new Response(htmlResult(body), {
+        status,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  // Parse the submission up front so we can forward it to the CRM even when
+  // email delivery isn't configured — a lead should never be silently dropped.
+  let data;
+  try {
+    if (isForm) {
+      const fd = await request.formData();
+      data = Object.fromEntries(fd.entries());
+      // An unchecked checkbox is simply absent from form data — record it explicitly.
+      data.smsOptIn = data.smsOptIn === "Yes" ? "Yes" : "No";
+    } else {
+      data = await request.json();
+    }
+  } catch (err) {
+    console.error("contact function parse error", err);
+    return reply({ success: false, error: "Could not read your submission." }, 400);
+  }
+
+  // Funnel every camdill.com lead into the CRM (crm.smartr8.com). Best-effort and
+  // non-blocking: a CRM hiccup must never break the visitor's submission, and it
+  // fires regardless of whether Resend email is configured.
+  context.waitUntil(forwardLeadToCrm(data, env));
+
+  if (!env.RESEND_API_KEY) {
+    return reply(
+      {
+        success: false,
+        error: "Email is not configured: RESEND_API_KEY is missing in the Cloudflare Pages environment.",
+      },
+      500,
+    );
+  }
+
+  try {
+    const {
+      firstName, lastName, name,
+      email, phone, message,
+      loanType, timeline,
+      loanAmount, creditScore, propertyType,
+      smsOptIn,
+      ...rest
+    } = data;
+
+    const displayName = name || `${firstName || ""} ${lastName || ""}`.trim() || "Unknown";
+
+    const rows = Object.entries({
+      Name: displayName,
+      Email: email,
+      Phone: phone,
+      "Loan Type": loanType,
+      "Loan Amount": loanAmount,
+      "Credit Score": creditScore,
+      "Property Type": propertyType,
+      Timeline: timeline,
+      Message: message,
+      "SMS Opt-In": smsOptIn,
+      ...rest,
+    })
+      .filter(([, v]) => v)
+      .map(
+        ([k, v]) =>
+          `<tr><td style="padding:6px 12px;font-weight:600;white-space:nowrap;background:#f5f5f5">${k}</td><td style="padding:6px 12px">${v}</td></tr>`
+      )
+      .join("");
+
+    const html = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+        <h2 style="color:#111111;margin-bottom:16px">New Lead — camdill.com</h2>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #ddd;border-radius:8px;overflow:hidden">
+          ${rows}
+        </table>
+        <p style="margin-top:24px;font-size:12px;color:#888">
+          Sent from the contact form at camdill.com
+        </p>
+      </div>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM || "noreply@camdill.com",
+        to: env.RESEND_TO || "Cdill@adaxahome.com",
+        reply_to: email || undefined,
+        subject: `New Lead: ${displayName}`,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("Resend send failed", res.status, err);
+      return reply({ success: false, status: res.status, error: err }, 500);
+    }
+
+    return reply({ success: true }, 200);
+  } catch (err) {
+    console.error("contact function error", err);
+    return reply({ success: false, error: err.message }, 500);
+  }
+}
+
+// Minimal branded confirmation page for no-JavaScript form submissions.
+function htmlResult(body) {
+  const ok = body && body.success !== false;
+  const heading = ok ? "Thank you!" : "Something went wrong";
+  const detail = ok
+    ? "Your message has been sent. Cameron will be in touch shortly."
+    : "Please try again, or call 805-415-0275 / email Cdill@adaxahome.com directly.";
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${heading} | Cameron Dill</title>
+<style>
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:#e5e5e5;background:#000;min-height:100vh;
+    display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .card{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:14px;
+    padding:32px;max-width:440px}
+  h1{color:#fff;margin:0 0 10px;font-size:24px}
+  p{font-size:15px;line-height:1.6}
+  a{display:inline-block;margin-top:18px;color:#000;background:#fff;text-decoration:none;
+    padding:11px 20px;border-radius:8px;font-weight:600}
+</style></head>
+<body><div class="card"><h1>${heading}</h1><p>${detail}</p>
+<a href="/opt-in">Back to the form</a></div></body></html>`;
+}
+
+// Forward a lead to the Smartr8 CRM intake (crm.smartr8.com). The webhook carries
+// its own ?key=; the default below works with zero env setup and matches the key
+// the teamdill.com site already uses, so both sites funnel into the same CRM.
+// Override via env.CRM_LEAD_WEBHOOK to rotate the key without a code change.
+// Best-effort: the CRM dedups by phone/email and any extra fields land in the
+// lead's `custom`, so we just pass the whole submission through.
+async function forwardLeadToCrm(data, env) {
+  const url =
+    env.CRM_LEAD_WEBHOOK ||
+    "https://crm.smartr8.com/webhooks/lead?key=4519413906c139e16484f518fdd8968c";
+
+  // Tag the source so camdill.com leads are distinguishable from teamdill.com leads.
+  const payload = { ...data, source: "camdill.com" };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      console.error("CRM lead forward failed", res.status, await res.text());
+    }
+  } catch (err) {
+    console.error("CRM lead forward error", err);
+  }
+}

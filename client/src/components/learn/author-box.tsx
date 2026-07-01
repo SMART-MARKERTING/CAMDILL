@@ -1,0 +1,50 @@
+import { Calendar } from "lucide-react";
+import headshotImage from "@assets/cameron-dill-headshot.png";
+import {
+  LO_NAME,
+  LO_TITLE,
+  NMLS_ID,
+  COMPANY_NAME,
+  COMPANY_NMLS_ID,
+  LICENSED_STATES_ABBR,
+} from "@/lib/site-config";
+
+interface AuthorBoxProps {
+  /** Human-readable last-updated date shown on the article. */
+  dateModified: string;
+}
+
+/**
+ * Author / reviewer block for every article: LO name, NMLS ID, company,
+ * service states, and the last-updated date.
+ */
+export default function AuthorBox({ dateModified }: AuthorBoxProps) {
+  return (
+    <div className="bg-white/10 border border-white/20 rounded-xl p-5">
+      <div className="flex items-center gap-3 mb-3">
+        <img
+          src={headshotImage}
+          alt={LO_NAME}
+          className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+        />
+        <div>
+          <p className="text-white text-sm font-semibold">
+            {LO_NAME}, NMLS #{NMLS_ID}
+          </p>
+          <p className="text-white/55 text-xs">{LO_TITLE}</p>
+          <p className="text-white/55 text-xs">
+            {COMPANY_NAME} · NMLS #{COMPANY_NMLS_ID}
+          </p>
+        </div>
+      </div>
+      <p className="text-white/55 text-xs mb-3">
+        Serving {LICENSED_STATES_ABBR}.
+      </p>
+      <div className="space-y-1 border-t border-white/10 pt-3">
+        <p className="text-white/45 text-xs flex items-center gap-1.5">
+          <Calendar className="h-3 w-3 flex-shrink-0" /> Last updated: {dateModified}
+        </p>
+      </div>
+    </div>
+  );
+}
