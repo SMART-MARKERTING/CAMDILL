@@ -85,9 +85,6 @@ export default function SiteFooter() {
           Adaxa Home LLC is an Equal Housing Lender. We do not discriminate on the basis of race, color, religion, national origin, sex, marital status, age, or any other characteristic protected by federal law.
         </p>
 
-        <p className="text-white/35 text-xs text-center italic">
-          "Trust in the Lord with all your heart" — Proverbs 3:5
-        </p>
       </div>
     </footer>
   );
