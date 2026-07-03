@@ -18,6 +18,7 @@ export default function SiteFooter() {
                 { label: "FAQ", href: "/faq" },
                 { label: "Contact", href: "/contact" },
                 { label: "Testimonials", href: "/testimonials" },
+                { label: "Apply Today", href: "https://teamdill.com/applytoday", external: true },
                 { label: "Get Instant Options →", href: "https://teamdill.com", external: true },
               ].map((l) => (
                 <li key={l.href}>
